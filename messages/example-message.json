@@ -1,0 +1,9 @@
+{
+  "userId": "12345",
+  "action": "test_event",
+  "timestamp": "2025-10-23T10:00:00Z",
+  "data": {
+    "key1": "value1",
+    "key2": "value2"
+  }
+}

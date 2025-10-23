@@ -1,0 +1,32 @@
+# Google Pub/Sub Configuration
+pubsub:
+  # GCP Project ID
+  projectId: "your-gcp-project-id"
+
+  # Topic name
+  topicId: "your-topic-name"
+
+  # Path to service account key file (optional, uses default credentials if not specified)
+  credentialsFile: ""
+
+# Message configuration
+message:
+  # Directory to read message files from
+  sourceDir: "./messages"
+
+  # Attributes to attach to each message
+  attributes:
+    environment: "test"
+    version: "1.0"
+    source: "pubsub-test-app"
+
+# Publishing configuration
+publishing:
+  # Number of concurrent workers for sending messages
+  concurrency: 10
+
+  # Batch size for publishing
+  batchSize: 100
+
+  # Enable verbose logging
+  verbose: true
