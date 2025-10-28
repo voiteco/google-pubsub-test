@@ -49,14 +49,16 @@ func loadConfig(path string) (*Config, error) {
 	return &config, nil
 }
 
-// loadMessage loads message content from file
-func loadMessage(dir string) ([]byte, error) {
+// loadMessages loads all message files from directory
+func loadMessages(dir string) ([][]byte, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read message directory: %w", err)
 	}
 
-	// Find the first file in the directory (not a directory)
+	var messages [][]byte
+
+	// Load all files in the directory (not directories)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			filePath := filepath.Join(dir, entry.Name())
@@ -64,15 +66,35 @@ func loadMessage(dir string) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to read message file %s: %w", filePath, err)
 			}
-			return data, nil
+			messages = append(messages, data)
 		}
 	}
 
-	return nil, fmt.Errorf("no message files found in %s", dir)
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("no message files found in %s", dir)
+	}
+
+	return messages, nil
 }
 
-// publishMessages sends a specified number of messages to Pub/Sub
-func publishMessages(ctx context.Context, config *Config, messageData []byte, count int) error {
+// publishMessages sends messages to Pub/Sub based on count parameter
+// If count is 0, sends all messages once
+// If count <= number of messages, sends first 'count' messages
+// If count > number of messages, sends messages cyclically until 'count' is reached
+func publishMessages(ctx context.Context, config *Config, messages [][]byte, count int) error {
+	if len(messages) == 0 {
+		return fmt.Errorf("no messages to publish")
+	}
+
+	// Determine how many messages to send
+	var messagesToSend int
+	if count == 0 {
+		// Send all messages once
+		messagesToSend = len(messages)
+	} else {
+		messagesToSend = count
+	}
+
 	// Create Pub/Sub client
 	var opts []option.ClientOption
 	if config.PubSub.CredentialsFile != "" {
@@ -111,18 +133,21 @@ func publishMessages(ctx context.Context, config *Config, messageData []byte, co
 	// Channel for concurrency control
 	semaphore := make(chan struct{}, config.Publishing.Concurrency)
 
-	log.Printf("Starting to publish %d messages...", count)
+	log.Printf("Starting to publish %d messages (from %d unique files)...", messagesToSend, len(messages))
 
-	for i := 0; i < count; i++ {
+	for i := 0; i < messagesToSend; i++ {
 		wg.Add(1)
 		semaphore <- struct{}{} // Acquire slot
 
-		go func(index int) {
+		// Use modulo to cycle through messages if needed
+		messageIndex := i % len(messages)
+
+		go func(index int, msgData []byte) {
 			defer wg.Done()
 			defer func() { <-semaphore }() // Release slot
 
 			msg := &pubsub.Message{
-				Data:       messageData,
+				Data:       msgData,
 				Attributes: config.Message.Attributes,
 			}
 
@@ -141,7 +166,7 @@ func publishMessages(ctx context.Context, config *Config, messageData []byte, co
 					log.Printf("Published %d messages", index+1)
 				}
 			}
-		}(i)
+		}(i, messages[messageIndex])
 	}
 
 	// Wait for all operations to complete
@@ -152,7 +177,8 @@ func publishMessages(ctx context.Context, config *Config, messageData []byte, co
 
 	// Print statistics
 	fmt.Println("\n=== Publishing Statistics ===")
-	fmt.Printf("Total messages sent: %d\n", count)
+	fmt.Printf("Total messages sent: %d\n", messagesToSend)
+	fmt.Printf("Unique message files: %d\n", len(messages))
 	fmt.Printf("Successful: %d\n", successCount)
 	fmt.Printf("Failed: %d\n", errorCount)
 	fmt.Printf("Duration: %v\n", duration)
@@ -168,11 +194,11 @@ func publishMessages(ctx context.Context, config *Config, messageData []byte, co
 func main() {
 	// Define command-line flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
-	count := flag.Int("count", 1, "Number of messages to send")
+	count := flag.Int("count", 0, "Number of messages to send (0 = send all files once)")
 	flag.Parse()
 
-	if *count <= 0 {
-		log.Fatal("Count must be greater than 0")
+	if *count < 0 {
+		log.Fatal("Count must be 0 or greater (0 = send all files)")
 	}
 
 	// Load configuration
@@ -181,18 +207,18 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Load message
-	messageData, err := loadMessage(config.Message.SourceDir)
+	// Load all messages
+	messages, err := loadMessages(config.Message.SourceDir)
 	if err != nil {
-		log.Fatalf("Failed to load message: %v", err)
+		log.Fatalf("Failed to load messages: %v", err)
 	}
 
-	log.Printf("Loaded message from %s (%d bytes)", config.Message.SourceDir, len(messageData))
+	log.Printf("Loaded %d message files from %s", len(messages), config.Message.SourceDir)
 	log.Printf("Target topic: %s/%s", config.PubSub.ProjectID, config.PubSub.TopicID)
 
 	// Publish messages
 	ctx := context.Background()
-	if err := publishMessages(ctx, config, messageData, *count); err != nil {
+	if err := publishMessages(ctx, config, messages, *count); err != nil {
 		log.Fatalf("Failed to publish messages: %v", err)
 	}
 

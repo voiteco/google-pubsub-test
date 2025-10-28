@@ -5,6 +5,7 @@ A command-line application for testing high-throughput message publishing to Goo
 ## Features
 
 - Fast publishing of large volumes of messages to Pub/Sub
+- Support for multiple message files with cyclic sending
 - Flexible configuration via YAML file
 - Support for custom message attributes
 - Parallel publishing with configurable concurrency level
@@ -85,27 +86,31 @@ publishing:
 
 ## Preparing Messages
 
-1. Create a file with message content in the `messages/` directory
-2. The application will automatically find and read the first file in this directory
+1. Create one or more files with message content in the `messages/` directory
+2. The application will automatically load **all files** from this directory
 3. File format can be any (JSON, XML, plain text, etc.)
+4. Each file will be read and used as a separate message template
 
-Example file is already created: `messages/example-message.json`
+When publishing:
+- If `count` is 0 or not specified: each file will be sent once
+- If `count` ≤ number of files: first `count` files will be sent
+- If `count` > number of files: messages will be sent cyclically until `count` is reached
 
 ## Usage
 
 ### Basic Usage
 
-Send 1 message (default):
+Send all message files once (default):
 ```bash
 ./pubsub-test
 ```
 
-Send 100 messages:
+Send specific number of messages:
 ```bash
 ./pubsub-test -count 100
 ```
 
-Send 10000 messages:
+Send large volume (messages will cycle if count > number of files):
 ```bash
 ./pubsub-test -count 10000
 ```
@@ -116,6 +121,19 @@ Use a different configuration file:
 ```bash
 ./pubsub-test -config custom-config.yaml -count 1000
 ```
+
+### Understanding the -count Parameter
+
+The `-count` parameter controls how many messages will be published:
+
+- **`-count 0`** (or omit the parameter): Sends each message file once
+  - Example: 3 files in `messages/` → 3 messages sent
+
+- **`-count N`** where N ≤ number of files: Sends first N files
+  - Example: 3 files, `-count 2` → first 2 files sent
+
+- **`-count N`** where N > number of files: Cycles through files repeatedly
+  - Example: 3 files, `-count 10` → file1, file2, file3, file1, file2, file3, file1, file2, file3, file1
 
 ### Command Examples
 
@@ -135,15 +153,16 @@ Use a different configuration file:
 After execution, the program displays detailed statistics:
 
 ```
-2025/10/23 10:00:00 Loaded message from ./messages (156 bytes)
+2025/10/23 10:00:00 Loaded 3 message files from ./messages
 2025/10/23 10:00:00 Target topic: your-project/your-topic
-2025/10/23 10:00:00 Starting to publish 1000 messages...
+2025/10/23 10:00:00 Starting to publish 1000 messages (from 3 unique files)...
 2025/10/23 10:00:01 Published 100 messages
 2025/10/23 10:00:02 Published 200 messages
 ...
 
 === Publishing Statistics ===
 Total messages sent: 1000
+Unique message files: 3
 Successful: 1000
 Failed: 0
 Duration: 2.5s
@@ -169,14 +188,28 @@ publishing:
 .
 ├── main.go                      # Main application code
 ├── config.yaml                  # Configuration file
-├── messages/                    # Directory with messages
-│   └── example-message.json    # Example message
+├── messages/                    # Directory for message files
+│   └── (place your message files here)
 ├── go.mod                       # Go module
 ├── go.sum                       # Dependencies
 └── README.md                    # Documentation
 ```
 
 ## Troubleshooting
+
+### Error "no message files found"
+
+Make sure you have at least one file in the `messages/` directory:
+```bash
+# Check if directory exists and has files
+ls -la messages/
+
+# Create directory if it doesn't exist
+mkdir -p messages
+
+# Add a test message
+echo '{"test": "message"}' > messages/test.json
+```
 
 ### Error "topic does not exist"
 
